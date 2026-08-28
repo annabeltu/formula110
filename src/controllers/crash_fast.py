@@ -7,6 +7,6 @@ RACING_COLOR: str = "#ff8700"
 
 
 def control(sensors: RobotSensors) -> RobotCommand:
-    throttle: float = 0.0
+    throttle: float = 1.0
     steer: float = 0.0
     return RobotCommand(throttle, steer)
