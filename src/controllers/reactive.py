@@ -11,8 +11,8 @@ from controllers.reactive_params import (
     TURN_SLOWDOWN
 )
 
-RACING_NAME: str = "Baseline Autopilot"
-RACING_COLOR: str = "#24C875"
+RACING_NAME: str = "Reactive"
+RACING_COLOR: str = "#C8249C"
 
 
 def _clamp(value: float, low: float, high: float) -> float:
