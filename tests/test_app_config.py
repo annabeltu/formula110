@@ -3,10 +3,13 @@ from __future__ import annotations
 import argparse
 from pathlib import Path
 from types import SimpleNamespace
+from typing import cast
 
 import pytest
 
 from racing.game.app import (
+    _format_individual_winner_banner,
+    _head_to_head_round_finished,
     active_scene_camera_lens,
     build_scene,
     head_to_head_car_label_layout,
@@ -29,8 +32,55 @@ from racing.graphics.colors import (
     UNC_FORDHAM_FOUNTAIN,
 )
 from racing.race.head_to_head import HeadToHeadRaceEntry
-from racing.race.runtime import DEFAULT_RACE_RANDOM_SEED
+from racing.race.runtime import DEFAULT_RACE_RANDOM_SEED, RaceCarRuntime
 from racing.student.api import default_student_controller
+
+
+def test_individual_winner_banner_names_only_first_place_car_and_time() -> None:
+    config = HeadToHeadViewerConfig(
+        challenger_name="Baseline + Reactive",
+        incumbent_name="Imitation",
+        challenger_copies=2,
+        incumbent_copies=1,
+        challenger_copy_names=("Baseline", "Reactive"),
+    )
+    entries = (
+        HeadToHeadRaceEntry(role="challenger", copy_index=0),
+        HeadToHeadRaceEntry(role="challenger", copy_index=1),
+        HeadToHeadRaceEntry(role="incumbent", copy_index=0),
+    )
+    runtimes = tuple(
+        cast(RaceCarRuntime, SimpleNamespace(tracker=SimpleNamespace(best_distance_m=distance), marshal_penalty_m=0.0))
+        for distance in (15.0, 22.5, 18.0)
+    )
+
+    assert _format_individual_winner_banner(
+        config=config, entries=entries, runtimes=runtimes, elapsed_seconds=60.0
+    ) == "1ST PLACE: Reactive\nTIME: 60.0s"
+
+
+def test_viewed_race_finishes_when_first_car_completes_a_lap() -> None:
+    runtimes = tuple(
+        cast(RaceCarRuntime, SimpleNamespace(tracker=SimpleNamespace(completed_lap=completed)))
+        for completed in (False, True, False)
+    )
+
+    assert _head_to_head_round_finished(
+        runtimes=runtimes, elapsed_seconds=18.5, time_limit_seconds=60.0
+    )
+
+
+def test_viewed_race_uses_time_limit_when_no_car_finishes() -> None:
+    runtimes = (
+        cast(RaceCarRuntime, SimpleNamespace(tracker=SimpleNamespace(completed_lap=False))),
+    )
+
+    assert not _head_to_head_round_finished(
+        runtimes=runtimes, elapsed_seconds=59.9, time_limit_seconds=60.0
+    )
+    assert _head_to_head_round_finished(
+        runtimes=runtimes, elapsed_seconds=60.0, time_limit_seconds=60.0
+    )
 
 
 def test_parse_window_size_accepts_width_by_height() -> None:
@@ -124,3 +174,4 @@ def test_default_head_to_head_colors_use_fordham_fountain_versus_carolina_blue()
     assert DEFAULT_INCUMBENT_TEAM_COLOR == UNC_CAROLINA_BLUE
     assert HeadToHeadViewerConfig().challenger_team_color == DEFAULT_CHALLENGER_TEAM_COLOR
     assert HeadToHeadViewerConfig().incumbent_team_color == DEFAULT_INCUMBENT_TEAM_COLOR
+    assert HeadToHeadViewerConfig().challenger_copy_colors == ()

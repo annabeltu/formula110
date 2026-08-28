@@ -84,6 +84,33 @@ over their corresponding seeded defaults.
 The simulator seed controls simulator placement only. It does not seed PyTorch,
 NumPy, a genetic algorithm, or stochastic controller inference.
 
+## Baseline imitation learning
+
+`controllers.imitation` is a dependency-free behavior-cloning policy trained
+from actions produced by `controllers.baseline`. Its checked-in model was fit
+from 8,005 observations gathered while two baseline cars raced, which adds
+traffic and obstacle states to ordinary track-following demonstrations.
+
+Retrain the artifact after changing the expert or feature representation:
+
+```bash
+uv run python scripts/train_imitation.py --races 12 --seconds 30
+```
+
+Race baseline, reactive, and imitation simultaneously in the same headless
+physics simulation:
+
+```bash
+uv run python scripts/race_three_controllers.py --races 7 --seconds 30 --seed 110
+```
+
+Useful demonstrations cover representative speeds, curves, traffic, errors,
+and recovery states. The current data varies race start and nearby traffic on
+the bundled track, but it does not provide genuinely different tracks and has
+few severe mistakes. This means the policy can imitate normal baseline driving
+well while still drifting in unfamiliar states. Collecting corrections from
+the imitation car's own states (DAgger) is the natural next improvement.
+
 ## Packaging a controller
 
 A simple function is the smallest supported controller shape. Keep function
