@@ -32,18 +32,24 @@ RACING_SEED = 110
 # --------------------------------------------------
 
 def write_parameters(
-    center_weight: float,
-    far_lookahead_weight: float,
-    base_speed: float,
-    turn_slowdown: float,
-) -> None:
-    """Write the current Optuna parameters into reactive_params.py."""
-
+    center_weight,
+    far_lookahead_weight,
+    base_speed,
+    turn_slowdown,
+    throttle_gain,
+    max_throttle,
+    front_slow_distance,
+    front_speed_scale,
+):
     PARAM_FILE.write_text(
         f"""CENTER_WEIGHT = {center_weight}
 FAR_LOOKAHEAD_WEIGHT = {far_lookahead_weight}
 BASE_SPEED = {base_speed}
 TURN_SLOWDOWN = {turn_slowdown}
+THROTTLE_GAIN = {throttle_gain}
+MAX_THROTTLE = {max_throttle}
+FRONT_SLOW_DISTANCE = {front_slow_distance}
+FRONT_SPEED_SCALE = {front_speed_scale}
 """
     )
 
@@ -156,16 +162,46 @@ def objective(trial: optuna.Trial) -> float:
         0.05,
     )
 
+    # Allow faster target speeds.
     base_speed = trial.suggest_float(
         "BASE_SPEED",
-        5.0,
-        9.0,
+        6.0,
+        12.0,
     )
 
+    # Allow the car to slow down less aggressively.
     turn_slowdown = trial.suggest_float(
         "TURN_SLOWDOWN",
-        2.0,
-        6.0,
+        0.5,
+        5.0,
+    )
+
+    # How aggressively it tries to reach target speed.
+    throttle_gain = trial.suggest_float(
+        "THROTTLE_GAIN",
+        0.20,
+        0.60,
+    )
+
+    # Formula 110 allows throttle up to 1.
+    max_throttle = trial.suggest_float(
+        "MAX_THROTTLE",
+        0.70,
+        1.0,
+    )
+
+    # How early to slow for an obstacle.
+    front_slow_distance = trial.suggest_float(
+        "FRONT_SLOW_DISTANCE",
+        4.0,
+        8.0,
+    )
+
+    # How restrictive front-distance speed control is.
+    front_speed_scale = trial.suggest_float(
+        "FRONT_SPEED_SCALE",
+        0.60,
+        1.50,
     )
 
     # --------------------------------------------------
@@ -177,6 +213,10 @@ def objective(trial: optuna.Trial) -> float:
         far_lookahead_weight,
         base_speed,
         turn_slowdown,
+        throttle_gain,
+        max_throttle,
+        front_slow_distance,
+        front_speed_scale,
     )
 
     # --------------------------------------------------
@@ -217,7 +257,10 @@ def objective(trial: optuna.Trial) -> float:
     print(f"FAR_LOOKAHEAD_WEIGHT: {far_lookahead_weight:.4f}")
     print(f"BASE_SPEED:           {base_speed:.4f}")
     print(f"TURN_SLOWDOWN:        {turn_slowdown:.4f}")
-    print(f"Score:                {score:.2f}")
+    print(f"THROTTLE_GAIN:        {throttle_gain:.4f}")
+    print(f"MAX_THROTTLE:         {max_throttle:.4f}")
+    print(f"FRONT_SLOW_DISTANCE:  {front_slow_distance:.4f}")
+    print(f"FRONT_SPEED_SCALE:    {front_speed_scale:.4f}")
     print("----------------------------------------")
 
     return score
@@ -263,12 +306,15 @@ def main():
     # --------------------------------------------------
 
     best = study.best_params
-
     write_parameters(
         best["CENTER_WEIGHT"],
         best["FAR_LOOKAHEAD_WEIGHT"],
         best["BASE_SPEED"],
         best["TURN_SLOWDOWN"],
+        best["THROTTLE_GAIN"],
+        best["MAX_THROTTLE"],
+        best["FRONT_SLOW_DISTANCE"],
+        best["FRONT_SPEED_SCALE"],
     )
 
     print()
