@@ -8,7 +8,7 @@ from controllers.reactive_params import (
     CENTER_WEIGHT,
     FAR_LOOKAHEAD_WEIGHT,
     BASE_SPEED,
-    TURN_SLOWDOWN
+    TURN_SLOWDOWN,
 )
 
 RACING_NAME: str = "Reactive"

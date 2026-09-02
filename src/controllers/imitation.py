@@ -60,8 +60,12 @@ class ImitationController:
 
     def __call__(self, sensors: RobotSensors) -> RobotCommand:
         inputs = features(sensors)
-        throttle = sum(weight * value for weight, value in zip(self._throttle, inputs, strict=True))
-        steer = sum(weight * value for weight, value in zip(self._steer, inputs, strict=True))
+        throttle = sum(
+            weight * value for weight, value in zip(self._throttle, inputs, strict=True)
+        )
+        steer = sum(
+            weight * value for weight, value in zip(self._steer, inputs, strict=True)
+        )
         return RobotCommand(
             throttle=max(-1.0, min(1.0, throttle)),
             steer=max(-1.0, min(1.0, steer)),
