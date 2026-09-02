@@ -72,7 +72,6 @@ from racing.race.head_to_head import (
     classify_head_to_head_winner,
     controller_for_copy,
     format_head_to_head_result,
-    format_head_to_head_result_banner,
     head_to_head_race_entries,
     head_to_head_race_margin,
     head_to_head_team_stats_from_runtimes,
@@ -649,7 +648,7 @@ def build_head_to_head_viewer_scene(config: HeadToHeadViewerConfig) -> RunnableA
     result_background.hide()
     result_display.hide()
     damage_bars = _add_damage_hud_bars(
-        ursina=ursina, colors=tuple(_head_to_head_team_color(config=config, role=entry.role) for entry in entries)
+        ursina=ursina, colors=tuple(_head_to_head_car_paint_color(config=config, entry=entry) for entry in entries)
     )
     _add_head_to_head_damage_hud_labels(
         ursina=ursina,
@@ -725,7 +724,7 @@ def build_head_to_head_viewer_scene(config: HeadToHeadViewerConfig) -> RunnableA
                 heading_degrees=spawn_pose.heading_degrees,
                 reset_damage=True,
             )
-            team_color = _head_to_head_team_color(config=config, role=entry.role)
+            team_color = _head_to_head_car_paint_color(config=config, entry=entry)
             apply_robot_team_color(
                 robot=runtime.robot, assets=assets, team_color=_head_to_head_car_paint_color(config=config, entry=entry)
             )
@@ -800,7 +799,11 @@ def build_head_to_head_viewer_scene(config: HeadToHeadViewerConfig) -> RunnableA
                     delta_seconds=config.fixed_delta_seconds,
                 )
 
-            if race_elapsed_seconds >= config.round_seconds:
+            if _head_to_head_round_finished(
+                runtimes=tuple(runtimes),
+                elapsed_seconds=race_elapsed_seconds,
+                time_limit_seconds=config.round_seconds,
+            ):
                 break
 
         camera_target_runtime = _head_to_head_camera_target_runtime(
@@ -829,7 +832,11 @@ def build_head_to_head_viewer_scene(config: HeadToHeadViewerConfig) -> RunnableA
         )
         _update_damage_hud_bars(bars=damage_bars, robots=tuple(runtime.robot for runtime in runtimes))
 
-        if race_elapsed_seconds < config.round_seconds:
+        if not _head_to_head_round_finished(
+            runtimes=tuple(runtimes),
+            elapsed_seconds=race_elapsed_seconds,
+            time_limit_seconds=config.round_seconds,
+        ):
             return
 
         completed_race_results.append(
@@ -853,7 +860,15 @@ def build_head_to_head_viewer_scene(config: HeadToHeadViewerConfig) -> RunnableA
                 fixed_delta_seconds=config.fixed_delta_seconds,
             )
             print(format_head_to_head_result(final_result))
-            _set_panda2d_hud_text(result_display, format_head_to_head_result_banner(final_result))
+            _set_panda2d_hud_text(
+                result_display,
+                _format_individual_winner_banner(
+                    config=config,
+                    entries=entries,
+                    runtimes=tuple(runtimes),
+                    elapsed_seconds=race_elapsed_seconds,
+                ),
+            )
             _set_panda2d_hud_text_color(
                 result_display,
                 _head_to_head_result_color(config=config, result=final_result),
@@ -887,6 +902,12 @@ def _validate_head_to_head_viewer_config(config: HeadToHeadViewerConfig) -> None
         raise ValueError("challenger_copies must be at least one")
     if config.incumbent_copies < 1:
         raise ValueError("incumbent_copies must be at least one")
+    if config.challenger_copy_names and len(config.challenger_copy_names) != config.challenger_copies:
+        raise ValueError("challenger_copy_names must have one name per challenger car")
+    if config.challenger_copy_colors and len(config.challenger_copy_colors) != config.challenger_copies:
+        raise ValueError("challenger_copy_colors must have one color per challenger car")
+    if config.challenger_copy_controllers and len(config.challenger_copy_controllers) != config.challenger_copies:
+        raise ValueError("challenger_copy_controllers must have one controller per challenger car")
     if config.challenger_keyboard and config.incumbent_keyboard:
         raise ValueError("keyboard control can only be assigned to one head-to-head side")
     if config.challenger_keyboard and config.challenger_copies != 1:
@@ -966,6 +987,8 @@ def _head_to_head_viewer_controller(
     *, config: HeadToHeadViewerConfig, entry: HeadToHeadRaceEntry
 ) -> RobotController | None:
     if entry.role == "challenger":
+        if config.challenger_copy_controllers:
+            return config.challenger_copy_controllers[entry.copy_index]
         return config.challenger_controller
     return config.incumbent_controller
 
@@ -1017,7 +1040,7 @@ def _style_head_to_head_label(
 ) -> None:
     if label is None:
         return
-    team_color = _head_to_head_team_color(config=config, role=entry.role)
+    team_color = _head_to_head_car_paint_color(config=config, entry=entry)
     label.background.setColor(
         team_color[0],
         team_color[1],
@@ -1032,7 +1055,7 @@ def _add_head_to_head_car_label(
     *, ursina: Any, config: HeadToHeadViewerConfig, entry: HeadToHeadRaceEntry
 ) -> HeadToHeadCarLabel:
     parent = ursina.application.base.aspect2d
-    team_color = _head_to_head_team_color(config=config, role=entry.role)
+    team_color = _head_to_head_car_paint_color(config=config, entry=entry)
     background = _panda2d_hud_rounded_card(
         parent=parent,
         name="head-to-head-car-label-background",
@@ -1112,8 +1135,37 @@ def active_scene_camera_lens(ursina: Any) -> Any:
 
 
 def _head_to_head_car_label(*, config: HeadToHeadViewerConfig, entry: HeadToHeadRaceEntry) -> str:
+    if entry.role == "challenger" and config.challenger_copy_names:
+        return _short_head_to_head_name(config.challenger_copy_names[entry.copy_index], max_length=18)
     team_name = config.challenger_name if entry.role == "challenger" else config.incumbent_name
     return f"{_short_head_to_head_name(team_name, max_length=18)} {entry.copy_index + 1}"
+
+
+def _format_individual_winner_banner(
+    *,
+    config: HeadToHeadViewerConfig,
+    entries: tuple[HeadToHeadRaceEntry, ...],
+    runtimes: tuple[RaceCarRuntime, ...],
+    elapsed_seconds: float,
+) -> str:
+    """Name only the highest-scoring car when a viewed race finishes."""
+    if not entries or len(entries) != len(runtimes):
+        raise ValueError("entries and runtimes must contain the same cars")
+    winner_index = max(range(len(runtimes)), key=lambda index: race_scored_distance_m(runtimes[index]))
+    winner_name = _head_to_head_car_label(config=config, entry=entries[winner_index])
+    if entries[winner_index].role == "incumbent" and config.incumbent_copies == 1:
+        winner_name = _short_head_to_head_name(config.incumbent_name, max_length=18)
+    return f"1ST PLACE: {winner_name}\nTIME: {elapsed_seconds:.1f}s"
+
+
+def _head_to_head_round_finished(
+    *,
+    runtimes: tuple[RaceCarRuntime, ...],
+    elapsed_seconds: float,
+    time_limit_seconds: float,
+) -> bool:
+    """End a viewed race at the first completed lap or at its safety time limit."""
+    return elapsed_seconds >= time_limit_seconds or any(runtime.tracker.completed_lap for runtime in runtimes)
 
 
 def _head_to_head_team_color(*, config: HeadToHeadViewerConfig, role: str) -> ColorRGBA:
@@ -1129,6 +1181,8 @@ def _head_to_head_result_color(*, config: HeadToHeadViewerConfig, result: HeadTo
 
 
 def _head_to_head_car_paint_color(*, config: HeadToHeadViewerConfig, entry: HeadToHeadRaceEntry) -> ColorRGBA:
+    if entry.role == "challenger" and config.challenger_copy_colors:
+        return config.challenger_copy_colors[entry.copy_index]
     return _head_to_head_team_color(config=config, role=entry.role)
 
 

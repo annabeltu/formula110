@@ -114,6 +114,9 @@ class HeadToHeadViewerConfig:
     window_type: str | None = None
     challenger_team_color: ColorRGBA = DEFAULT_CHALLENGER_TEAM_COLOR
     incumbent_team_color: ColorRGBA = DEFAULT_INCUMBENT_TEAM_COLOR
+    challenger_copy_names: tuple[str, ...] = ()
+    challenger_copy_colors: tuple[ColorRGBA, ...] = ()
+    challenger_copy_controllers: tuple[RobotController, ...] = ()
     audio: RacingAudioConfig = field(default_factory=RacingAudioConfig)
 
 

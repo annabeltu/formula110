@@ -66,6 +66,20 @@ def test_default_student_controller_backs_out_of_contact() -> None:
     assert command.throttle < 0.0
 
 
+def test_imitation_controller_loads_trained_baseline_model() -> None:
+    submission = load_student_submission("controllers.imitation")
+    command = submission.controller(
+        RobotSensors(
+            camera=CameraSensors(center_offset_m=0.5, heading_error_degrees=20.0),
+            odometry=OdometrySensors(speed_mps=3.0),
+        )
+    )
+
+    assert submission.display_name == "Baseline Imitation"
+    assert -1.0 <= command.throttle <= 1.0
+    assert 0.0 < command.steer <= 1.0
+
+
 def test_bundled_starter_controller_loads_from_top_level_controllers_package() -> None:
     controller = load_student_controller("controllers.crash_fast")
 

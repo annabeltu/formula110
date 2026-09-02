@@ -8,7 +8,14 @@ from controllers.reactive_params import (
     CENTER_WEIGHT,
     FAR_LOOKAHEAD_WEIGHT,
     BASE_SPEED,
-    TURN_SLOWDOWN
+    TURN_SLOWDOWN,
+<<<<<<< Updated upstream
+=======
+    THROTTLE_GAIN,
+    MAX_THROTTLE,
+    FRONT_SLOW_DISTANCE,
+    FRONT_SPEED_SCALE,
+>>>>>>> Stashed changes
 )
 
 RACING_NAME: str = "Reactive"
@@ -58,20 +65,30 @@ def control(sensors: RobotSensors) -> RobotCommand:
     steer = _clamp(steer, -1.0, 1.0)
 
     # Slow down as the required turn becomes sharper.
+    # Slow down as the required turn becomes sharper.
     turn_demand = max(
         abs(steer),
         min(1.0, abs(camera.heading_error_degrees) / 55.0),
         min(1.0, abs(far_offset) / 7.0),
     )
+
     target_speed = BASE_SPEED - TURN_SLOWDOWN * turn_demand
 
     # Leave room to stop for anything directly ahead.
-    if front < 7.0:
-        target_speed = min(target_speed, max(0.0, (front - 0.8) * 0.75))
+    if front < FRONT_SLOW_DISTANCE:
+        target_speed = min(
+            target_speed,
+            max(0.0, (front - 0.8) * FRONT_SPEED_SCALE)
+        )
 
-    throttle = _clamp((target_speed - speed) * 0.28, -0.65, 0.8)
+    # Always calculate throttle.
+    throttle = _clamp(
+        (target_speed - speed) * THROTTLE_GAIN,
+        -0.65,
+        MAX_THROTTLE
+    )
 
-    # Reverse out of sustained contact and point toward the more open side.
+    # Reverse out of sustained contact.
     if sensors.contact.any_contact > 0.25:
         open_side = -0.7 if front_left > front_right else 0.7
         return RobotCommand(throttle=-0.35, steer=open_side)
