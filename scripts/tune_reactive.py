@@ -7,9 +7,7 @@ from pathlib import Path
 
 import optuna
 
-
 from racing import load_student_submission, run_headless_head_to_head
-
 
 # --------------------------------------------------
 # SETTINGS
@@ -34,8 +32,11 @@ RACING_SEED = 110
 def write_parameters(
     center_weight,
     far_lookahead_weight,
+    heading_divisor,
+    steering_gain,
     base_speed,
     turn_slowdown,
+    turn_speed_exponent,
     throttle_gain,
     max_throttle,
     front_slow_distance,
@@ -44,12 +45,19 @@ def write_parameters(
     PARAM_FILE.write_text(
         f"""CENTER_WEIGHT = {center_weight}
 FAR_LOOKAHEAD_WEIGHT = {far_lookahead_weight}
+HEADING_DIVISOR = {heading_divisor}
+STEERING_GAIN = {steering_gain}
 BASE_SPEED = {base_speed}
 TURN_SLOWDOWN = {turn_slowdown}
+TURN_SPEED_EXPONENT = {turn_speed_exponent}
 THROTTLE_GAIN = {throttle_gain}
 MAX_THROTTLE = {max_throttle}
 FRONT_SLOW_DISTANCE = {front_slow_distance}
 FRONT_SPEED_SCALE = {front_speed_scale}
+THROTTLE_DEADBAND_MPS = 0.35
+RECOVERY_MAX_SPEED_MPS = 1.0
+SIDE_WALL_CLEARANCE_M = 1.4
+SIDE_WALL_STEER_GAIN = 0.35
 """
     )
 
@@ -75,9 +83,8 @@ def find_values(data, words):
             for index, item in enumerate(value):
                 search(item, f"{path}[{index}]".lower())
 
-        elif isinstance(value, (int, float)):
-            if all(word in path for word in words):
-                matches.append(float(value))
+        elif isinstance(value, (int, float)) and all(word in path for word in words):
+            matches.append(float(value))
 
     search(data)
 
@@ -89,31 +96,26 @@ def find_values(data, words):
 # --------------------------------------------------
 
 def score_result(record: dict) -> float:
-    """
-    Higher score = better reactive controller.
+    """Return the official summed challenger distance across all races."""
+    races = record.get("races")
+    if isinstance(races, list):
+        scores: list[float] = []
+        for race in races:
+            if not isinstance(race, dict):
+                break
+            challenger = race.get("challenger")
+            if not isinstance(challenger, dict):
+                break
+            summary = challenger.get("summary")
+            if not isinstance(summary, dict):
+                break
+            score = summary.get("team_sum_distance_m")
+            if not isinstance(score, (int, float)):
+                break
+            scores.append(float(score))
+        if len(scores) == len(races):
+            return sum(scores)
 
-    First try to use challenger scored distance.
-    If that field cannot be found, try challenger distance.
-    """
-
-    scored_distances = find_values(
-        record,
-        ["challenger", "scored", "distance"],
-    )
-
-    if scored_distances:
-        return sum(scored_distances)
-
-    distances = find_values(
-        record,
-        ["challenger", "distance"],
-    )
-
-    if distances:
-        return sum(distances)
-
-    # If Formula 110's result structure is different,
-    # print it so we can see the exact field names.
     print("\nCould not automatically locate challenger distance.")
     print("Result dictionary:")
     print(record)
@@ -162,31 +164,49 @@ def objective(trial: optuna.Trial) -> float:
         0.05,
     )
 
+    heading_divisor = trial.suggest_float(
+        "HEADING_DIVISOR",
+        32.0,
+        55.0,
+    )
+
+    steering_gain = trial.suggest_float(
+        "STEERING_GAIN",
+        0.9,
+        1.35,
+    )
+
     # Allow faster target speeds.
     base_speed = trial.suggest_float(
         "BASE_SPEED",
-        6.0,
-        12.0,
+        18.0,
+        34.0,
     )
 
     # Allow the car to slow down less aggressively.
     turn_slowdown = trial.suggest_float(
         "TURN_SLOWDOWN",
-        0.5,
-        5.0,
+        8.0,
+        24.0,
+    )
+
+    turn_speed_exponent = trial.suggest_float(
+        "TURN_SPEED_EXPONENT",
+        1.0,
+        3.0,
     )
 
     # How aggressively it tries to reach target speed.
     throttle_gain = trial.suggest_float(
         "THROTTLE_GAIN",
-        0.20,
-        0.60,
+        0.30,
+        0.55,
     )
 
     # Formula 110 allows throttle up to 1.
     max_throttle = trial.suggest_float(
         "MAX_THROTTLE",
-        0.70,
+        0.90,
         1.0,
     )
 
@@ -211,8 +231,11 @@ def objective(trial: optuna.Trial) -> float:
     write_parameters(
         center_weight,
         far_lookahead_weight,
+        heading_divisor,
+        steering_gain,
         base_speed,
         turn_slowdown,
+        turn_speed_exponent,
         throttle_gain,
         max_throttle,
         front_slow_distance,
@@ -223,8 +246,8 @@ def objective(trial: optuna.Trial) -> float:
     # 3. RELOAD CONTROLLER
     # --------------------------------------------------
 
-    import controllers.reactive_params as reactive_params
     import controllers.reactive as reactive
+    import controllers.reactive_params as reactive_params
 
     importlib.reload(reactive_params)
     importlib.reload(reactive)
@@ -255,8 +278,11 @@ def objective(trial: optuna.Trial) -> float:
     print(f"Trial: {trial.number}")
     print(f"CENTER_WEIGHT:        {center_weight:.4f}")
     print(f"FAR_LOOKAHEAD_WEIGHT: {far_lookahead_weight:.4f}")
+    print(f"HEADING_DIVISOR:      {heading_divisor:.4f}")
+    print(f"STEERING_GAIN:        {steering_gain:.4f}")
     print(f"BASE_SPEED:           {base_speed:.4f}")
     print(f"TURN_SLOWDOWN:        {turn_slowdown:.4f}")
+    print(f"TURN_SPEED_EXPONENT:  {turn_speed_exponent:.4f}")
     print(f"THROTTLE_GAIN:        {throttle_gain:.4f}")
     print(f"MAX_THROTTLE:         {max_throttle:.4f}")
     print(f"FRONT_SLOW_DISTANCE:  {front_slow_distance:.4f}")
@@ -309,8 +335,11 @@ def main():
     write_parameters(
         best["CENTER_WEIGHT"],
         best["FAR_LOOKAHEAD_WEIGHT"],
+        best["HEADING_DIVISOR"],
+        best["STEERING_GAIN"],
         best["BASE_SPEED"],
         best["TURN_SLOWDOWN"],
+        best["TURN_SPEED_EXPONENT"],
         best["THROTTLE_GAIN"],
         best["MAX_THROTTLE"],
         best["FRONT_SLOW_DISTANCE"],

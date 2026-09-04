@@ -2,21 +2,24 @@
 
 from math import isfinite
 
-from racing import RobotCommand, RobotSensors
-
 from controllers.reactive_params import (
+    BASE_SPEED,
     CENTER_WEIGHT,
     FAR_LOOKAHEAD_WEIGHT,
-    BASE_SPEED,
-    TURN_SLOWDOWN,
-<<<<<<< Updated upstream
-=======
-    THROTTLE_GAIN,
-    MAX_THROTTLE,
     FRONT_SLOW_DISTANCE,
     FRONT_SPEED_SCALE,
->>>>>>> Stashed changes
+    HEADING_DIVISOR,
+    MAX_THROTTLE,
+    RECOVERY_MAX_SPEED_MPS,
+    SIDE_WALL_CLEARANCE_M,
+    SIDE_WALL_STEER_GAIN,
+    STEERING_GAIN,
+    THROTTLE_DEADBAND_MPS,
+    THROTTLE_GAIN,
+    TURN_SLOWDOWN,
+    TURN_SPEED_EXPONENT,
 )
+from racing import RobotCommand, RobotSensors
 
 RACING_NAME: str = "Reactive"
 RACING_COLOR: str = "#C8249C"
@@ -37,6 +40,8 @@ def control(sensors: RobotSensors) -> RobotCommand:
     front = _range(sensors.lidar.front_m)
     front_left = _range(sensors.lidar.front_left_m)
     front_right = _range(sensors.lidar.front_right_m)
+    wall_left = _range(sensors.wall_lidar.left_m)
+    wall_right = _range(sensors.wall_lidar.right_m)
 
     # If track geometry is unavailable, cautiously aim toward the open side.
     if not sensors.camera.visible:
@@ -49,8 +54,8 @@ def control(sensors: RobotSensors) -> RobotCommand:
     far_offset = offsets[-1] if offsets else near_offset
 
     # Follow the center line and use the far point to begin turns early.
-    steer = (
-        camera.heading_error_degrees / 48.0
+    raw_steer = (
+        camera.heading_error_degrees / HEADING_DIVISOR
         + camera.center_offset_m * CENTER_WEIGHT
         + near_offset * 0.055
         + far_offset * FAR_LOOKAHEAD_WEIGHT
@@ -61,10 +66,16 @@ def control(sensors: RobotSensors) -> RobotCommand:
     if obstacle_distance < 4.0:
         avoidance_strength = (4.0 - obstacle_distance) / 4.0
         open_side = -1.0 if front_left > front_right else 1.0
-        steer += open_side * 0.45 * avoidance_strength
-    steer = _clamp(steer, -1.0, 1.0)
+        raw_steer += open_side * 0.45 * avoidance_strength
 
-    # Slow down as the required turn becomes sharper.
+    # Side beams provide a final steering-only guard near a barrier. Keeping
+    # this separate from target speed avoids unnecessary braking in turns.
+    if wall_left < SIDE_WALL_CLEARANCE_M:
+        raw_steer += SIDE_WALL_STEER_GAIN * (1.0 - wall_left / SIDE_WALL_CLEARANCE_M)
+    if wall_right < SIDE_WALL_CLEARANCE_M:
+        raw_steer -= SIDE_WALL_STEER_GAIN * (1.0 - wall_right / SIDE_WALL_CLEARANCE_M)
+    steer = _clamp(raw_steer * STEERING_GAIN, -1.0, 1.0)
+
     # Slow down as the required turn becomes sharper.
     turn_demand = max(
         abs(steer),
@@ -72,7 +83,12 @@ def control(sensors: RobotSensors) -> RobotCommand:
         min(1.0, abs(far_offset) / 7.0),
     )
 
-    target_speed = BASE_SPEED - TURN_SLOWDOWN * turn_demand
+    # Preserve full speed on straights, but shed speed early when even a
+    # moderate bend appears. The nonlinear profile is smoother and safer than
+    # waiting for steering demand to become extreme before braking.
+    straight_fraction = (1.0 - turn_demand) ** TURN_SPEED_EXPONENT
+    corner_speed = BASE_SPEED - TURN_SLOWDOWN
+    target_speed = corner_speed + TURN_SLOWDOWN * straight_fraction
 
     # Leave room to stop for anything directly ahead.
     if front < FRONT_SLOW_DISTANCE:
@@ -82,14 +98,19 @@ def control(sensors: RobotSensors) -> RobotCommand:
         )
 
     # Always calculate throttle.
-    throttle = _clamp(
-        (target_speed - speed) * THROTTLE_GAIN,
+    speed_error = target_speed - speed
+    # Coast near the target instead of alternating between throttle and brake
+    # when sensor readings move by a small amount from one tick to the next.
+    throttle = 0.0 if abs(speed_error) < THROTTLE_DEADBAND_MPS else _clamp(
+        speed_error * THROTTLE_GAIN,
         -0.65,
-        MAX_THROTTLE
+        MAX_THROTTLE,
     )
 
-    # Reverse out of sustained contact.
-    if sensors.contact.any_contact > 0.25:
+    # Reverse only when sustained contact has actually left the car stuck.
+    # At racing speed, contact is usually a brief side-by-side car collision;
+    # reversing then feels like a random brake and creates a larger crash.
+    if sensors.contact.any_contact > 0.25 and speed < RECOVERY_MAX_SPEED_MPS:
         open_side = -0.7 if front_left > front_right else 0.7
         return RobotCommand(throttle=-0.35, steer=open_side)
 
