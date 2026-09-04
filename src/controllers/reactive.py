@@ -11,10 +11,13 @@ from controllers.reactive_params import (
     HEADING_DIVISOR,
     MAX_THROTTLE,
     RECOVERY_MAX_SPEED_MPS,
+    SIDE_WALL_CLEARANCE_M,
+    SIDE_WALL_STEER_GAIN,
     STEERING_GAIN,
     THROTTLE_DEADBAND_MPS,
     THROTTLE_GAIN,
     TURN_SLOWDOWN,
+    TURN_SPEED_EXPONENT,
 )
 from racing import RobotCommand, RobotSensors
 
@@ -37,6 +40,8 @@ def control(sensors: RobotSensors) -> RobotCommand:
     front = _range(sensors.lidar.front_m)
     front_left = _range(sensors.lidar.front_left_m)
     front_right = _range(sensors.lidar.front_right_m)
+    wall_left = _range(sensors.wall_lidar.left_m)
+    wall_right = _range(sensors.wall_lidar.right_m)
 
     # If track geometry is unavailable, cautiously aim toward the open side.
     if not sensors.camera.visible:
@@ -62,6 +67,13 @@ def control(sensors: RobotSensors) -> RobotCommand:
         avoidance_strength = (4.0 - obstacle_distance) / 4.0
         open_side = -1.0 if front_left > front_right else 1.0
         raw_steer += open_side * 0.45 * avoidance_strength
+
+    # Side beams provide a final steering-only guard near a barrier. Keeping
+    # this separate from target speed avoids unnecessary braking in turns.
+    if wall_left < SIDE_WALL_CLEARANCE_M:
+        raw_steer += SIDE_WALL_STEER_GAIN * (1.0 - wall_left / SIDE_WALL_CLEARANCE_M)
+    if wall_right < SIDE_WALL_CLEARANCE_M:
+        raw_steer -= SIDE_WALL_STEER_GAIN * (1.0 - wall_right / SIDE_WALL_CLEARANCE_M)
     steer = _clamp(raw_steer * STEERING_GAIN, -1.0, 1.0)
 
     # Slow down as the required turn becomes sharper.
@@ -71,7 +83,12 @@ def control(sensors: RobotSensors) -> RobotCommand:
         min(1.0, abs(far_offset) / 7.0),
     )
 
-    target_speed = BASE_SPEED - TURN_SLOWDOWN * turn_demand
+    # Preserve full speed on straights, but shed speed early when even a
+    # moderate bend appears. The nonlinear profile is smoother and safer than
+    # waiting for steering demand to become extreme before braking.
+    straight_fraction = (1.0 - turn_demand) ** TURN_SPEED_EXPONENT
+    corner_speed = BASE_SPEED - TURN_SLOWDOWN
+    target_speed = corner_speed + TURN_SLOWDOWN * straight_fraction
 
     # Leave room to stop for anything directly ahead.
     if front < FRONT_SLOW_DISTANCE:

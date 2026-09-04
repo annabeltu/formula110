@@ -36,6 +36,7 @@ def write_parameters(
     steering_gain,
     base_speed,
     turn_slowdown,
+    turn_speed_exponent,
     throttle_gain,
     max_throttle,
     front_slow_distance,
@@ -48,12 +49,15 @@ HEADING_DIVISOR = {heading_divisor}
 STEERING_GAIN = {steering_gain}
 BASE_SPEED = {base_speed}
 TURN_SLOWDOWN = {turn_slowdown}
+TURN_SPEED_EXPONENT = {turn_speed_exponent}
 THROTTLE_GAIN = {throttle_gain}
 MAX_THROTTLE = {max_throttle}
 FRONT_SLOW_DISTANCE = {front_slow_distance}
 FRONT_SPEED_SCALE = {front_speed_scale}
 THROTTLE_DEADBAND_MPS = 0.35
 RECOVERY_MAX_SPEED_MPS = 1.0
+SIDE_WALL_CLEARANCE_M = 1.4
+SIDE_WALL_STEER_GAIN = 0.35
 """
     )
 
@@ -175,28 +179,34 @@ def objective(trial: optuna.Trial) -> float:
     # Allow faster target speeds.
     base_speed = trial.suggest_float(
         "BASE_SPEED",
-        6.0,
-        12.0,
+        18.0,
+        34.0,
     )
 
     # Allow the car to slow down less aggressively.
     turn_slowdown = trial.suggest_float(
         "TURN_SLOWDOWN",
+        8.0,
+        24.0,
+    )
+
+    turn_speed_exponent = trial.suggest_float(
+        "TURN_SPEED_EXPONENT",
         1.0,
-        5.5,
+        3.0,
     )
 
     # How aggressively it tries to reach target speed.
     throttle_gain = trial.suggest_float(
         "THROTTLE_GAIN",
-        0.20,
-        0.60,
+        0.30,
+        0.55,
     )
 
     # Formula 110 allows throttle up to 1.
     max_throttle = trial.suggest_float(
         "MAX_THROTTLE",
-        0.70,
+        0.90,
         1.0,
     )
 
@@ -225,6 +235,7 @@ def objective(trial: optuna.Trial) -> float:
         steering_gain,
         base_speed,
         turn_slowdown,
+        turn_speed_exponent,
         throttle_gain,
         max_throttle,
         front_slow_distance,
@@ -271,6 +282,7 @@ def objective(trial: optuna.Trial) -> float:
     print(f"STEERING_GAIN:        {steering_gain:.4f}")
     print(f"BASE_SPEED:           {base_speed:.4f}")
     print(f"TURN_SLOWDOWN:        {turn_slowdown:.4f}")
+    print(f"TURN_SPEED_EXPONENT:  {turn_speed_exponent:.4f}")
     print(f"THROTTLE_GAIN:        {throttle_gain:.4f}")
     print(f"MAX_THROTTLE:         {max_throttle:.4f}")
     print(f"FRONT_SLOW_DISTANCE:  {front_slow_distance:.4f}")
@@ -327,6 +339,7 @@ def main():
         best["STEERING_GAIN"],
         best["BASE_SPEED"],
         best["TURN_SLOWDOWN"],
+        best["TURN_SPEED_EXPONENT"],
         best["THROTTLE_GAIN"],
         best["MAX_THROTTLE"],
         best["FRONT_SLOW_DISTANCE"],
