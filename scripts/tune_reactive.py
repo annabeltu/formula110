@@ -192,7 +192,7 @@ def objective(trial: optuna.Trial) -> float:
     turn_speed_exponent = trial.suggest_float(
         "TURN_SPEED_EXPONENT",
         1.0,
-        3.0,
+        7.0,
     )
 
     # How aggressively it tries to reach target speed.
