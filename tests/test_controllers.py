@@ -4,6 +4,7 @@ from pathlib import Path
 
 import pytest
 
+from controllers import reactive
 from racing.race.head_to_head import controller_for_copy
 from racing.student.api import (
     CameraSensors,
@@ -23,6 +24,28 @@ def test_clamp_command_bounds_normalized_actuators() -> None:
     command = clamp_command(RobotCommand(throttle=3.0, steer=-2.0))
 
     assert command == RobotCommand(throttle=1.0, steer=-1.0)
+
+
+@pytest.mark.parametrize("speed_mps", (-8.0, -0.1, 0.0, 8.0, 30.0))
+@pytest.mark.parametrize("camera_visible", (False, True))
+def test_reactive_controller_never_applies_brakes(speed_mps: float, camera_visible: bool) -> None:
+    sensors = RobotSensors(
+        camera=CameraSensors(
+            visible=camera_visible,
+            center_offset_m=4.0,
+            heading_error_degrees=90.0,
+            lookahead_offsets_m=(4.0, 8.0, 12.0),
+        ),
+        odometry=OdometrySensors(speed_mps=speed_mps),
+        contact=ContactSensors(wall=2.0, robot=2.0),
+        lidar=LidarSensors(distances_m=(0.5,) * 7),
+        wall_lidar=LidarSensors(distances_m=(0.5,) * 7),
+    )
+
+    command = reactive.control(sensors)
+
+    assert command.throttle >= 0.0
+    assert not (speed_mps < 0.0 and command.throttle > 0.0)
 
 
 def test_robot_command_has_only_signed_throttle_and_steering_controls() -> None:

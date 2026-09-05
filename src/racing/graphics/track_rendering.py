@@ -7,7 +7,6 @@ from importlib import import_module
 from math import atan, atan2, degrees, hypot
 from typing import Any, cast
 
-from racing.physics import attach_static_box
 from racing.graphics.render_assets import (
     CAROLINA_BLUE_COLOR,
     INNER_WALL_LIGHTNESS_SCALE,
@@ -28,7 +27,15 @@ from racing.graphics.track_mesh import (
     wall_offsets_for_side,
     wall_paint_offsets_for_side,
 )
-from racing.track.world import START_POSITION, TRACK_SCALE, TRACK_WIDTH, TrackPoint, sampled_track_centerline, track_bounds
+from racing.physics import attach_static_box
+from racing.track.world import (
+    START_POSITION,
+    TRACK_SCALE,
+    TRACK_WIDTH,
+    TrackPoint,
+    sampled_track_centerline,
+    track_bounds,
+)
 
 START_HEADING_DEGREES = 90.0
 TRACK_CURB_GAP = 0.02 * TRACK_SCALE
@@ -256,9 +263,10 @@ def add_mugello_short_track(
     start_line_position: TrackPoint = START_POSITION,
     start_line_heading_degrees: float = START_HEADING_DEGREES,
     include_collision: bool = True,
+    samples: tuple[TrackPoint, ...] | None = None,
 ) -> Any:
     """Draw the default Mugello-inspired track and optional colliders."""
-    samples = sampled_track_centerline(samples_per_segment=10)
+    samples = sampled_track_centerline(samples_per_segment=10) if samples is None else samples
     wall_inside_distance = TRACK_WIDTH / 2 + TRACK_EDGE_BUFFER
     track_light_receivers: list[Any] = []
 
@@ -1448,9 +1456,7 @@ def _nearest_start_finish_sample_segment_fraction(
         if segment_length_squared <= 0.0:
             continue
 
-        fraction = (
-            (position.x - sample.x) * segment_x + (position.z - sample.z) * segment_z
-        ) / segment_length_squared
+        fraction = ((position.x - sample.x) * segment_x + (position.z - sample.z) * segment_z) / segment_length_squared
         fraction = max(0.0, min(1.0, fraction))
         nearest_x = sample.x + segment_x * fraction
         nearest_z = sample.z + segment_z * fraction
