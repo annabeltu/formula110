@@ -55,9 +55,8 @@ MAX_THROTTLE = {max_throttle}
 FRONT_SLOW_DISTANCE = {front_slow_distance}
 FRONT_SPEED_SCALE = {front_speed_scale}
 THROTTLE_DEADBAND_MPS = 0.35
-RECOVERY_MAX_SPEED_MPS = 1.0
-SIDE_WALL_CLEARANCE_M = 1.4
-SIDE_WALL_STEER_GAIN = 0.35
+SIDE_WALL_CLEARANCE_M = 1.8
+SIDE_WALL_STEER_GAIN = 0.50
 """
     )
 
@@ -193,7 +192,7 @@ def objective(trial: optuna.Trial) -> float:
     turn_speed_exponent = trial.suggest_float(
         "TURN_SPEED_EXPONENT",
         1.0,
-        3.0,
+        7.0,
     )
 
     # How aggressively it tries to reach target speed.

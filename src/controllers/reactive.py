@@ -10,7 +10,6 @@ from controllers.reactive_params import (
     FRONT_SPEED_SCALE,
     HEADING_DIVISOR,
     MAX_THROTTLE,
-    RECOVERY_MAX_SPEED_MPS,
     SIDE_WALL_CLEARANCE_M,
     SIDE_WALL_STEER_GAIN,
     STEERING_GAIN,
@@ -36,7 +35,8 @@ def _range(distance_m: float, fallback_m: float = 50.0) -> float:
 
 def control(sensors: RobotSensors) -> RobotCommand:
     """Choose steering and throttle from the current sensor snapshot."""
-    speed = max(0.0, sensors.odometry.speed_mps)
+    signed_speed = sensors.odometry.speed_mps
+    speed = max(0.0, signed_speed)
     front = _range(sensors.lidar.front_m)
     front_left = _range(sensors.lidar.front_left_m)
     front_right = _range(sensors.lidar.front_right_m)
@@ -46,7 +46,7 @@ def control(sensors: RobotSensors) -> RobotCommand:
     # If track geometry is unavailable, cautiously aim toward the open side.
     if not sensors.camera.visible:
         steer = _clamp((front_left - front_right) / 8.0, -0.65, 0.65)
-        return RobotCommand(throttle=0.12 if front > 1.5 else -0.25, steer=steer)
+        return RobotCommand(throttle=0.12 if front > 1.5 else 0.0, steer=steer)
 
     camera = sensors.camera
     offsets = camera.lookahead_offsets_m
@@ -101,17 +101,16 @@ def control(sensors: RobotSensors) -> RobotCommand:
     speed_error = target_speed - speed
     # Coast near the target instead of alternating between throttle and brake
     # when sensor readings move by a small amount from one tick to the next.
-    throttle = 0.0 if abs(speed_error) < THROTTLE_DEADBAND_MPS else _clamp(
+    throttle = 0.0 if speed_error < THROTTLE_DEADBAND_MPS else _clamp(
         speed_error * THROTTLE_GAIN,
-        -0.65,
+        0.0,
         MAX_THROTTLE,
     )
 
-    # Reverse only when sustained contact has actually left the car stuck.
-    # At racing speed, contact is usually a brief side-by-side car collision;
-    # reversing then feels like a random brake and creates a larger crash.
-    if sensors.contact.any_contact > 0.25 and speed < RECOVERY_MAX_SPEED_MPS:
-        open_side = -0.7 if front_left > front_right else 0.7
-        return RobotCommand(throttle=-0.35, steer=open_side)
+    # Positive throttle would count as braking while the car is still rolling
+    # backward. Coast until forward motion resumes so no command ever opposes
+    # the current direction of travel.
+    if signed_speed < 0.0:
+        throttle = 0.0
 
     return RobotCommand(throttle=throttle, steer=steer)
