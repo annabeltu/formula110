@@ -42,11 +42,13 @@ def control(sensors: RobotSensors) -> RobotCommand:
     front_right = _range(sensors.lidar.front_right_m)
     wall_left = _range(sensors.wall_lidar.left_m)
     wall_right = _range(sensors.wall_lidar.right_m)
+    wall_front = _range(sensors.wall_lidar.front_m)
 
     # If track geometry is unavailable, cautiously aim toward the open side.
     if not sensors.camera.visible:
         steer = _clamp((front_left - front_right) / 8.0, -0.65, 0.65)
-        return RobotCommand(throttle=0.12 if front > 1.5 else 0.0, steer=steer)
+        throttle = 0.12 if signed_speed >= 0.0 and front > 1.5 else 0.0
+        return RobotCommand(throttle=throttle, steer=steer)
 
     camera = sensors.camera
     offsets = camera.lookahead_offsets_m
@@ -67,6 +69,20 @@ def control(sensors: RobotSensors) -> RobotCommand:
         avoidance_strength = (4.0 - obstacle_distance) / 4.0
         open_side = -1.0 if front_left > front_right else 1.0
         raw_steer += open_side * 0.45 * avoidance_strength
+
+    # Begin a gentle pass before a slower car becomes an emergency. Camera
+    # competitors are filtered to an ahead cone so cars beside or behind us do
+    # not create steering noise.
+    for competitor in camera.competitors:
+        if (
+            competitor.distance_m < 8.0
+            and abs(competitor.angle_degrees) < 28.0
+            and competitor.closing_speed_mps > 0.5
+        ):
+            pass_strength = (8.0 - competitor.distance_m) / 8.0
+            pass_direction = 1.0 if competitor.angle_degrees <= 0.0 else -1.0
+            raw_steer += pass_direction * 0.28 * pass_strength
+            break
 
     # Side beams provide a final steering-only guard near a barrier. Keeping
     # this separate from target speed avoids unnecessary braking in turns.
@@ -90,21 +106,26 @@ def control(sensors: RobotSensors) -> RobotCommand:
     corner_speed = BASE_SPEED - TURN_SLOWDOWN
     target_speed = corner_speed + TURN_SLOWDOWN * straight_fraction
 
+    severe_turn = abs(camera.heading_error_degrees) > 55.0 or abs(far_offset) > 9.0
+    if severe_turn:
+        target_speed = min(target_speed, 9.0)
+
     # Leave room to stop for anything directly ahead.
     if front < FRONT_SLOW_DISTANCE:
-        target_speed = min(
-            target_speed,
-            max(0.0, (front - 0.8) * FRONT_SPEED_SCALE)
-        )
+        target_speed = min(target_speed, max(0.0, (front - 0.8) * FRONT_SPEED_SCALE))
 
     # Always calculate throttle.
     speed_error = target_speed - speed
     # Coast near the target instead of alternating between throttle and brake
     # when sensor readings move by a small amount from one tick to the next.
-    throttle = 0.0 if speed_error < THROTTLE_DEADBAND_MPS else _clamp(
-        speed_error * THROTTLE_GAIN,
-        0.0,
-        MAX_THROTTLE,
+    throttle = (
+        0.0
+        if speed_error < THROTTLE_DEADBAND_MPS
+        else _clamp(
+            speed_error * THROTTLE_GAIN,
+            0.0,
+            MAX_THROTTLE,
+        )
     )
 
     # Positive throttle would count as braking while the car is still rolling
@@ -113,4 +134,12 @@ def control(sensors: RobotSensors) -> RobotCommand:
     if signed_speed < 0.0:
         throttle = 0.0
 
-    return RobotCommand(throttle=throttle, steer=steer)
+    # On an unfamiliar track, lift early when the wall-only forward beam sees
+    # the end of the available straight. This is coasting, not braking.
+    coast_distance = 5.0 + speed * 0.6
+    if min(front, wall_front) < coast_distance:
+        throttle = 0.0
+
+    # This final clamp is a deliberate invariant: future changes to any rule
+    # above cannot accidentally introduce a negative-throttle brake command.
+    return RobotCommand(throttle=_clamp(throttle, 0.0, MAX_THROTTLE), steer=steer)
