@@ -150,6 +150,7 @@ def current_parameters() -> dict[str, float]:
     return {
         "CENTER_WEIGHT": reactive.CENTER_WEIGHT,
         "NEAR_LOOKAHEAD_WEIGHT": reactive.NEAR_LOOKAHEAD_WEIGHT,
+        "MID_LOOKAHEAD_WEIGHT": reactive.MID_LOOKAHEAD_WEIGHT,
         "FAR_LOOKAHEAD_WEIGHT": reactive.FAR_LOOKAHEAD_WEIGHT,
         "HEADING_DIVISOR": reactive.HEADING_DIVISOR,
         "STEERING_GAIN": reactive.STEERING_GAIN,
@@ -176,11 +177,12 @@ def sampled_parameters(trial: optuna.Trial) -> dict[str, float]:
     return {
         "CENTER_WEIGHT": trial.suggest_float("CENTER_WEIGHT", -0.1, 0.03),
         "NEAR_LOOKAHEAD_WEIGHT": trial.suggest_float("NEAR_LOOKAHEAD_WEIGHT", 0.07, 0.25),
+        "MID_LOOKAHEAD_WEIGHT": trial.suggest_float("MID_LOOKAHEAD_WEIGHT", -0.12, 0.22),
         "FAR_LOOKAHEAD_WEIGHT": trial.suggest_float("FAR_LOOKAHEAD_WEIGHT", 0.055, 0.145),
-        "HEADING_DIVISOR": trial.suggest_float("HEADING_DIVISOR", 38.0, 95.0),
-        "STEERING_GAIN": trial.suggest_float("STEERING_GAIN", 0.9, 1.45),
-        "BASE_SPEED": trial.suggest_float("BASE_SPEED", 20.8, 23.2),
-        "TURN_SLOWDOWN": trial.suggest_float("TURN_SLOWDOWN", 0.4, 3.5),
+        "HEADING_DIVISOR": trial.suggest_float("HEADING_DIVISOR", 35.0, 100.0),
+        "STEERING_GAIN": trial.suggest_float("STEERING_GAIN", 0.75, 1.5),
+        "BASE_SPEED": trial.suggest_float("BASE_SPEED", 21.0, 25.0),
+        "TURN_SLOWDOWN": trial.suggest_float("TURN_SLOWDOWN", 0.0, 5.0),
         "TURN_SPEED_EXPONENT": trial.suggest_float("TURN_SPEED_EXPONENT", 2.2, 5.8),
         "THROTTLE_GAIN": trial.suggest_float("THROTTLE_GAIN", 0.45, 0.95),
         "MAX_THROTTLE": trial.suggest_float("MAX_THROTTLE", 0.96, 1.0),
@@ -224,7 +226,11 @@ def main() -> None:
         metrics = tuple(evaluator.run(seed=seed) for seed in SEEDS)
         trial.set_user_attr("metrics", [asdict(metric) for metric in metrics])
         if any(
-            metric.fastest_lap_seconds is None or not metric.survived or metric.brake_applications > 0
+            metric.fastest_lap_seconds is None
+            or not metric.survived
+            or metric.brake_applications > 0
+            or metric.wall_contact_seconds > 0.0
+            or metric.damage > 0.0
             for metric in metrics
         ):
             return 100.0 + sum(metric.damage * 100.0 for metric in metrics)
