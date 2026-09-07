@@ -13,7 +13,7 @@ from typing import Any, cast
 import racing.game.app as game_app
 import racing.race.head_to_head as head_to_head
 from controllers import reactive
-from racing import load_student_submission
+from racing import RobotSensors, load_student_submission
 from racing.game.config import GameConfig
 from racing.graphics.panda_config import configure_headless_panda
 from racing.graphics.track_rendering import add_mugello_short_track, add_racing_scene_collisions
@@ -68,7 +68,7 @@ def install_technical_track() -> None:
 def run_metrics(*, track_name: str, seed: int, races: int, round_seconds: float) -> None:
     brake_applications = 0
 
-    def audited_control(sensors):
+    def audited_control(sensors: RobotSensors):
         nonlocal brake_applications
         command = reactive.control(sensors)
         speed = sensors.odometry.speed_mps
@@ -107,7 +107,8 @@ def run_metrics(*, track_name: str, seed: int, races: int, round_seconds: float)
                 robot=robot,
                 tracker=lap_progress_tracker_for_spawn_pose(model=model, spawn_pose=pose),
             )
-            head_to_head._run_headless_student_runtime_for_duration(
+            run_runtime = head_to_head._run_headless_student_runtime_for_duration  # pyright: ignore[reportPrivateUsage]
+            run_runtime(
                 model=model,
                 physics_world=physics_world,
                 physics_scene=physics_scene,
@@ -123,12 +124,21 @@ def run_metrics(*, track_name: str, seed: int, races: int, round_seconds: float)
     finally:
         base.destroy()
 
-    lap_times = tuple(
-        min(runtime.tracker.lap_times_seconds) for runtime in runtimes if runtime.tracker.lap_times_seconds
+    fastest_lap_times = tuple(
+        min(
+            crossing_time - (runtime.tracker.lap_times_seconds[index - 1] if index else 0.0)
+            for index, crossing_time in enumerate(runtime.tracker.lap_times_seconds)
+        )
+        for runtime in runtimes
+        if runtime.tracker.lap_times_seconds
     )
     print(f"track: {track_name}, controller: controllers.reactive, seed: {seed}, races: {races}")
     print(f"completed laps: {sum(runtime.tracker.lap_count for runtime in runtimes)}")
-    print(f"mean fastest lap: {sum(lap_times) / len(lap_times):.3f} s" if lap_times else "mean fastest lap: none")
+    print(
+        f"mean fastest lap: {sum(fastest_lap_times) / len(fastest_lap_times):.3f} s"
+        if fastest_lap_times
+        else "mean fastest lap: none"
+    )
     print(f"max speed: {max(runtime.max_speed_mps for runtime in runtimes) * 2.23694:.1f} mph")
     print(f"wall contact: {sum(runtime.tracker.wall_contact_seconds for runtime in runtimes):.3f} s")
     print(f"maximum damage: {max(robot_score_damage(runtime.robot) for runtime in runtimes):.4f}")

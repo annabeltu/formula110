@@ -5,16 +5,21 @@ from math import isfinite
 from controllers.reactive_params import (
     BASE_SPEED,
     CENTER_WEIGHT,
+    COAST_BASE_DISTANCE_M,
+    COAST_SPEED_FACTOR,
     FAR_LOOKAHEAD_WEIGHT,
     FRONT_SLOW_DISTANCE,
     FRONT_SPEED_SCALE,
     HEADING_DIVISOR,
     MAX_THROTTLE,
+    NEAR_LOOKAHEAD_WEIGHT,
     SIDE_WALL_CLEARANCE_M,
     SIDE_WALL_STEER_GAIN,
     STEERING_GAIN,
     THROTTLE_DEADBAND_MPS,
     THROTTLE_GAIN,
+    TURN_HEADING_NORMALIZER_DEGREES,
+    TURN_OFFSET_NORMALIZER_M,
     TURN_SLOWDOWN,
     TURN_SPEED_EXPONENT,
 )
@@ -59,7 +64,7 @@ def control(sensors: RobotSensors) -> RobotCommand:
     raw_steer = (
         camera.heading_error_degrees / HEADING_DIVISOR
         + camera.center_offset_m * CENTER_WEIGHT
-        + near_offset * 0.055
+        + near_offset * NEAR_LOOKAHEAD_WEIGHT
         + far_offset * FAR_LOOKAHEAD_WEIGHT
     )
 
@@ -95,8 +100,8 @@ def control(sensors: RobotSensors) -> RobotCommand:
     # Slow down as the required turn becomes sharper.
     turn_demand = max(
         abs(steer),
-        min(1.0, abs(camera.heading_error_degrees) / 55.0),
-        min(1.0, abs(far_offset) / 7.0),
+        min(1.0, abs(camera.heading_error_degrees) / TURN_HEADING_NORMALIZER_DEGREES),
+        min(1.0, abs(far_offset) / TURN_OFFSET_NORMALIZER_M),
     )
 
     # Preserve full speed on straights, but shed speed early when even a
@@ -136,7 +141,7 @@ def control(sensors: RobotSensors) -> RobotCommand:
 
     # On an unfamiliar track, lift early when the wall-only forward beam sees
     # the end of the available straight. This is coasting, not braking.
-    coast_distance = 5.0 + speed * 0.6
+    coast_distance = COAST_BASE_DISTANCE_M + speed * COAST_SPEED_FACTOR
     if min(front, wall_front) < coast_distance:
         throttle = 0.0
 
