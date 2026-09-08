@@ -39,7 +39,7 @@ from racing.race.runtime import (
 )
 from racing.race.sensors import build_robot_sensors
 
-PARAM_FILE = Path("src/controllers/reactive_params.py")
+PARAM_FILE = Path(__file__).with_name("reactive_params.py")
 SEEDS = (110, 2026)
 FIXED_DELTA_SECONDS = 1.0 / 60.0
 
