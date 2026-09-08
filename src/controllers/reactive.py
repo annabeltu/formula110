@@ -12,6 +12,7 @@ from controllers.reactive_params import (
     FRONT_SPEED_SCALE,
     HEADING_DIVISOR,
     MAX_THROTTLE,
+    MID_LOOKAHEAD_WEIGHT,
     NEAR_LOOKAHEAD_WEIGHT,
     SIDE_WALL_CLEARANCE_M,
     SIDE_WALL_STEER_GAIN,
@@ -45,6 +46,8 @@ def control(sensors: RobotSensors) -> RobotCommand:
     front = _range(sensors.lidar.front_m)
     front_left = _range(sensors.lidar.front_left_m)
     front_right = _range(sensors.lidar.front_right_m)
+    side_left = _range(sensors.lidar.left_m)
+    side_right = _range(sensors.lidar.right_m)
     wall_left = _range(sensors.wall_lidar.left_m)
     wall_right = _range(sensors.wall_lidar.right_m)
     wall_front = _range(sensors.wall_lidar.front_m)
@@ -58,6 +61,7 @@ def control(sensors: RobotSensors) -> RobotCommand:
     camera = sensors.camera
     offsets = camera.lookahead_offsets_m
     near_offset = offsets[0] if offsets else camera.center_offset_m
+    mid_offset = offsets[len(offsets) // 2] if offsets else near_offset
     far_offset = offsets[-1] if offsets else near_offset
 
     # Follow the center line and use the far point to begin turns early.
@@ -65,6 +69,7 @@ def control(sensors: RobotSensors) -> RobotCommand:
         camera.heading_error_degrees / HEADING_DIVISOR
         + camera.center_offset_m * CENTER_WEIGHT
         + near_offset * NEAR_LOOKAHEAD_WEIGHT
+        + mid_offset * MID_LOOKAHEAD_WEIGHT
         + far_offset * FAR_LOOKAHEAD_WEIGHT
     )
 
@@ -78,16 +83,35 @@ def control(sensors: RobotSensors) -> RobotCommand:
     # Begin a gentle pass before a slower car becomes an emergency. Camera
     # competitors are filtered to an ahead cone so cars beside or behind us do
     # not create steering noise.
+    nearby_competitor_ahead = False
     for competitor in camera.competitors:
         if (
-            competitor.distance_m < 8.0
-            and abs(competitor.angle_degrees) < 28.0
-            and competitor.closing_speed_mps > 0.5
+            competitor.distance_m < 14.0
+            and abs(competitor.angle_degrees) < 75.0
+            and competitor.closing_speed_mps > -1.0
         ):
-            pass_strength = (8.0 - competitor.distance_m) / 8.0
-            pass_direction = 1.0 if competitor.angle_degrees <= 0.0 else -1.0
-            raw_steer += pass_direction * 0.28 * pass_strength
+            pass_strength = (14.0 - competitor.distance_m) / 14.0
+            if abs(competitor.angle_degrees) < 6.0:
+                pass_direction = -1.0 if wall_left > wall_right else 1.0
+            else:
+                pass_direction = 1.0 if competitor.angle_degrees < 0.0 else -1.0
+
+            chosen_clearance = wall_right if pass_direction > 0.0 else wall_left
+            other_clearance = wall_left if pass_direction > 0.0 else wall_right
+            if chosen_clearance < 2.8 and other_clearance > chosen_clearance + 0.5:
+                pass_direction *= -1.0
+
+            angle_strength = max(0.2, 1.0 - abs(competitor.angle_degrees) / 75.0)
+            raw_steer += pass_direction * 0.72 * max(0.2, pass_strength) * angle_strength
+            nearby_competitor_ahead = abs(competitor.angle_degrees) < 22.0
             break
+
+    # Keep a buffer from a car already alongside. Comparing the ordinary and
+    # wall-only side rays distinguishes another vehicle from the barrier.
+    if side_left + 0.15 < wall_left and side_left < 2.4:
+        raw_steer += 0.65 * (1.0 - side_left / 2.4)
+    if side_right + 0.15 < wall_right and side_right < 2.4:
+        raw_steer -= 0.65 * (1.0 - side_right / 2.4)
 
     # Side beams provide a final steering-only guard near a barrier. Keeping
     # this separate from target speed avoids unnecessary braking in turns.
@@ -143,6 +167,8 @@ def control(sensors: RobotSensors) -> RobotCommand:
     # the end of the available straight. This is coasting, not braking.
     coast_distance = COAST_BASE_DISTANCE_M + speed * COAST_SPEED_FACTOR
     if min(front, wall_front) < coast_distance:
+        throttle = 0.0
+    if nearby_competitor_ahead:
         throttle = 0.0
 
     # This final clamp is a deliberate invariant: future changes to any rule
