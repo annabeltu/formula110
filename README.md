@@ -19,6 +19,181 @@ Start here:
 - [Autograder Guide](autograder/README.md): building and operating the isolated
   Gradescope evaluator
 
+## Install and run
+
+Formula 110 uses Python 3.11 and `uv`. From the repository root, install the
+locked dependencies once:
+
+```bash
+uv sync --managed-python
+```
+
+Run one controller on the graphical assignment track:
+
+```bash
+uv run racing --student-module controllers.reactive --seed 110
+uv run racing --student-module controllers.imitation --seed 110
+uv run racing --student-module controllers.baseline --seed 110
+```
+
+Replace `110` with any integer to change the starting position. Reusing a seed
+reproduces that position, which makes controller comparisons meaningful.
+
+Watch two controllers race (remove `--watch` for the faster, terminal-only
+headless version):
+
+```bash
+uv run racing h2h --watch \
+  --challenger-module controllers.reactive \
+  --incumbent-module controllers.imitation \
+  --seed 110 --races 1 --round-seconds 30
+```
+
+Compare all three supplied strategies in one headless simulation:
+
+```bash
+uv run python scripts/race_three_controllers.py \
+  --races 7 --seconds 30 --seed 110
+```
+
+### Original and technical-test tracks
+
+The normal `racing` commands use the original assignment track. The technical
+track is an extra test course with tighter bends and an S-section; it is
+installed at runtime by the audit script and is not a normal CLI track choice.
+
+```bash
+# Reactive on the technical-test track (headless metrics)
+uv run python scripts/test_reactive_new_track.py \
+  --seed 110 --races 7 --round-seconds 30
+
+# The same audit on the original track
+uv run python scripts/test_reactive_new_track.py \
+  --original --seed 110 --races 7 --round-seconds 30
+
+# Watch either track (omit --original for the technical track)
+uv run python scripts/test_reactive_new_track.py --watch --seed 110
+uv run python scripts/test_reactive_new_track.py --watch --original --seed 110
+```
+
+## Controller approaches
+
+### Reactive controller
+
+`controllers.reactive` is a hand-written, sensor-driven policy. It does not
+learn while racing and has no model state: every 60 Hz tick it computes a
+command directly from the current sensor snapshot. Its main rules are:
+
+- combine heading error, center offset, and near/mid/far lookahead offsets to
+  steer along the centerline;
+- use ordinary and wall-only LiDAR to avoid walls, blockers, and nearby cars;
+- use camera competitor readings to begin passes and avoid cars alongside;
+- reduce target speed as turn demand or a front obstacle increases; and
+- coast near the target speed and before an approaching wall.
+
+The final throttle is clamped to `[0, MAX_THROTTLE]`. It never requests
+negative throttle, and it coasts while rolling backward, so its command never
+opposes its current motion. This is the project's **gas-locked-in** behavior
+(also written `gas_locked_in` in notes): the car may accelerate or coast, but
+does not actively brake. There is no Python symbol named `gas_locked_in`; the
+invariant is implemented in `reactive.py`, while the dedicated evaluator is
+`tune_gas_locked.py`.
+
+`src/controllers/reactive_params.py` contains the numeric policy constants.
+Keeping these values separate from the rules makes them easy to optimize or
+edit without rewriting the controller. The weights control steering inputs;
+the speed, turn, throttle, front-distance, and coasting values control the
+target-speed profile; and the side-wall values control the last-resort wall
+guard.
+
+### Imitation controller
+
+`controllers.imitation` uses behavior cloning. Instead of applying explicit
+driving rules, it converts each sensor snapshot into 16 normalized and
+nonlinear features, then predicts throttle and steering with two fitted linear
+models. The weights live in `src/controllers/imitation_model.json`, are loaded
+once per controller instance, and require no ML framework at race time.
+
+The training script races two copies of `controllers.baseline`, records the
+expert action for sampled sensor states, and fits ridge-regression weights. Two
+expert cars provide some traffic and overtaking examples as well as ordinary
+track following:
+
+```bash
+uv run python scripts/train_imitation.py \
+  --races 12 --seconds 30 --seed 110
+```
+
+Change `--seed` to change the deterministic sequence of training starts. Other
+useful options are `--sample-every`, `--ridge`, and `--output`; run the script
+with `--help` for their defaults. Training overwrites
+`src/controllers/imitation_model.json` unless `--output` is supplied.
+
+The important limitation is distribution shift: the model learns what the
+baseline does in states the baseline visits. It has fewer examples of severe
+mistakes, recovery, and genuinely different tracks, so it can drift when it
+encounters unfamiliar situations.
+
+## Tuning the reactive controller with Optuna
+
+The primary tuner for the current reactive controller is
+`src/controllers/tune_gas_locked.py`. It uses Optuna's seeded TPE sampler to
+search the values consumed by `reactive.py` while keeping its gas-locked-in
+rule intact:
+
+```bash
+# Run 250 trials and save the best values to reactive_params.py
+uv run python src/controllers/tune_gas_locked.py --trials 250 --seed 110
+
+# Short experiment without modifying reactive_params.py at the end
+uv run python src/controllers/tune_gas_locked.py \
+  --trials 30 --seed 2026 --no-save
+```
+
+Each trial is evaluated in four 30-second solo scenarios: leaderboard starts
+for seeds `110` and `2026`, plus stress-test race indices for both seeds. A
+trial receives a large penalty if any scenario fails to complete a lap, is
+eliminated, applies a brake, touches a wall, or takes damage. Valid trials
+minimize mean fastest-lap time, with an additional wall-contact penalty. The
+current values are enqueued as the first trial so Optuna has a known baseline.
+
+The tuner's `--seed` controls **Optuna's sampling sequence**. It does not change
+the four evaluation scenarios, which are intentionally fixed in `SCENARIOS`
+for fair comparison. To evaluate different racing starts, edit `SCENARIOS` in
+the tuner or use the track-audit command with a different `--seed`.
+
+The tuner changes parameters in memory during the search and writes only the
+best set at the end. Nevertheless, commit or copy a known-good
+`reactive_params.py` before a long run. Use `--no-save` when exploring.
+
+`scripts/tune_reactive.py` is an older head-to-head tuning experiment against
+`controllers.baseline`. Its search space and parameter writer predate the
+current expanded parameter set, so `tune_gas_locked.py` is the maintained tuner
+for the current controller.
+
+## Essential files
+
+| Path | Purpose |
+| --- | --- |
+| `src/controllers/reactive.py` | Hand-written reactive rules and the gas-locked-in throttle invariant |
+| `src/controllers/reactive_params.py` | Tuned constants imported by the reactive controller |
+| `src/controllers/tune_gas_locked.py` | Maintained Optuna solo-lap tuner and safety evaluator |
+| `scripts/tune_reactive.py` | Older Optuna head-to-head experiment against baseline |
+| `src/controllers/imitation.py` | Feature extraction and dependency-free linear imitation inference |
+| `src/controllers/imitation_model.json` | Fitted throttle and steering weights used by imitation inference |
+| `scripts/train_imitation.py` | Collects baseline demonstrations and refits the imitation artifact |
+| `src/controllers/baseline.py` | Rule-based reference/expert used for training and comparisons |
+| `scripts/race_three_controllers.py` | Headless Baseline/Reactive/Imitation three-way comparison |
+| `scripts/test_reactive_new_track.py` | Reactive audit on the original or runtime-installed technical track |
+| `SENSORS.md` | Complete public observation fields, units, ranges, and meanings |
+| `GETTING_STARTED.md` | Setup, manual driving, and first-controller tutorial |
+| `src/racing/student/api.py` | Public `RobotSensors`, `RobotCommand`, loading, and controller contracts |
+| `src/racing/race/head_to_head.py` | Headless race runner, scoring, and result types |
+| `src/racing/game/cli.py` | Implementation of the `racing` command and its options |
+| `formula110-submission.json` | Submission manifest identifying the controller files/functions to grade |
+| `pyproject.toml` / `uv.lock` | Python version, dependencies, scripts, and reproducible dependency lock |
+| `tests/` | Physics, sensors, race, rendering, CLI, and controller regression tests |
+
 ## Runtime contract
 
 A controller receives an immutable `RobotSensors` snapshot and returns one
